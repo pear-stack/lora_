@@ -12,9 +12,10 @@ static const u1_t PROGMEM APPEUI[8]={ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
 void os_getArtEui (u1_t* buf) { memcpy_P(buf, APPEUI, 8);}
 
 // This should also be in little endian format, see above.
-static const u1_t PROGMEM DEVEUI[8]={ 0x48, 0xe3, 0x83, 0xfc, 0x65, 0x6d, 0xa3, 0xb0 };
+static const u1_t PROGMEM DEVEUI[8]={ 0xb0, 0xa3, 0x6d, 0x65, 0xfc, 0x83, 0xe3, 0x48 };
 void os_getDevEui (u1_t* buf) { memcpy_P(buf, DEVEUI, 8);}
-
+//0x48, 0xe3, 0x83, 0xfc, 0x65, 0x6d, 0xa3, 0xb0 //dziala
+//0xb0, 0xa3, 0x6d, 0x65, 0xfc, 0x83, 0xe3, 0x48
 // This key should be in big endian format (or, since it is not really a
 // number but a block of memory, endianness does not really apply). In
 // practice, a key taken from ttnctl can be copied as-is.
@@ -26,13 +27,13 @@ static osjob_t sendjob;
 
 // Schedule TX every this many seconds (might become longer due to duty
 // cycle limitations).
-const unsigned TX_INTERVAL = 60;
+const unsigned TX_INTERVAL = 5;
 
 // Pin mapping
 const lmic_pinmap lmic_pins = {
     .nss = 18,
     .rxtx = LMIC_UNUSED_PIN,
-    .rst = 23,
+    .rst = 14,
     .dio = {26, 33, 32},
 };
 void do_send(osjob_t* j);
