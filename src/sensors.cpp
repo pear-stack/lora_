@@ -35,6 +35,7 @@ void check_bme280_status(bool status, Adafruit_BME280 *bme)
 
 void print_bme280_data(Adafruit_BME280 *bme) 
 {
+  bme->takeForcedMeasurement();
   Serial.print("Temperature = ");
   Serial.print(bme->readTemperature());
   Serial.println(" °C");
@@ -50,10 +51,8 @@ void print_bme280_data(Adafruit_BME280 *bme)
   Serial.println();
 }
 
-void get_bme280_data(bool one_sensor, Adafruit_BME280 *bme0, bool bme0_status, Adafruit_BME280 *bme1, bool bme1_status, float *temp0, float *temp1, float *hum0, float *hum1, float *pressure0)
+void get_bme280_data(Adafruit_BME280 *bme0, bool bme0_status, Adafruit_BME280 *bme1, bool bme1_status, float *temp0, float *temp1, float *hum0, float *hum1, float *pressure0)
 {
-  if(one_sensor)
-    bme1_status = 1;
   if(!bme0_status || !bme1_status)
   {
     *temp0 = 0.0;
@@ -64,6 +63,8 @@ void get_bme280_data(bool one_sensor, Adafruit_BME280 *bme0, bool bme0_status, A
   }
   else
   {
+    bme0->takeForcedMeasurement();
+    bme1->takeForcedMeasurement();
     *temp0 = bme0->readTemperature();
     *hum0 = bme0->readHumidity();
     *pressure0 = bme0->readPressure()/100;

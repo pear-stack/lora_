@@ -3,18 +3,18 @@
 #include <hal/hal.h>
 #include <SPI.h>
 #include <creditionals.h>
-#include <Wire.h>
 #include <WiFi.h>
 #include <gps.h>
 #include <CayenneLPP.h>
 #include <sensors.h>
 #include <esp_sleep.h>
 
-#define SLEEP_BETWEEN_MESSAGES 1
-#define SLEEP_TIME_MS 20000
-#define SLEEP_DELAY_MS 2000
-
 #define DEBUG 1 // for real use comment this out
+#define SLEEP_BETWEEN_MESSAGES 1
+#define SLEEP_TIME_MS 30000
+#define SLEEP_DELAY_MS 1000
+
+
 
 CayenneLPP lpp(28); // Cayenne Low Power Payload (LPP) 
 #ifdef GPS_ON
@@ -40,7 +40,7 @@ bool bme1_status;
 
 static osjob_t sendjob;
 // wait this many seconds when no GPS fix is received to retry
-const unsigned int GPS_FIX_RETRY_DELAY = 3; 
+const unsigned int GPS_FIX_RETRY_DELAY = 3000; 
 // Pin mapping
 const lmic_pinmap lmic_pins = {
     .nss = 18,
@@ -83,16 +83,10 @@ void sleep_forever() {
 
 void sleep() {
     #if SLEEP_BETWEEN_MESSAGES
-        // Show the going to sleep message on the screen
         char buffer[20];
         snprintf(buffer, sizeof(buffer), "Sleeping in %d\n", (SLEEP_DELAY_MS / 1000));
         Serial.print(buffer);
-
-        // Wait for MESSAGE_TO_SLEEP_DELAY millis to sleep
         delay(SLEEP_DELAY_MS);
-        // Set the user button to wake the board
-        // We sleep for the interval between messages minus the current millis
-        // this way we distribute the messages evenly every SEND_INTERVAL millis
         sleep_millis(SLEEP_TIME_MS);
     #endif
 }
@@ -205,7 +199,7 @@ void onEvent (ev_t ev) {
 void do_send(osjob_t* j){
     get_battery_voltage(&vBat);
     //TODO: CHANGE bme0 to bme1 in 3rd argument
-    get_bme280_data(1, &bme0, bme0_status, &bme0, bme1_status, &temp0, &temp1, &hum0, &hum1, &pressure0); 
+    get_bme280_data(&bme0, bme0_status, &bme0, bme0_status, &temp0, &temp1, &hum0, &hum1, &pressure0); 
     #ifdef HX711_ON
     get_weight_data(&scale, &weight);
     #endif
@@ -243,8 +237,9 @@ void do_send(osjob_t* j){
         }
         else
         {
-            // try again in a few 'GPS_FIX_RETRY_DELAY' seconds...
-            os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(GPS_FIX_RETRY_DELAY), do_send);
+           while(!gps.checkGpsFix()){
+                delay(GPS_FIX_RETRY_DELAY);
+           }
         }
         #endif
     }
@@ -275,8 +270,20 @@ void setup() {
     #endif
     // sensor test  
     check_bme280_status(bme0_status, &bme0);
+    bme0.setSampling(Adafruit_BME280::MODE_FORCED, // Force reading after delayTime
+                     Adafruit_BME280::SAMPLING_X1, // Temperature sampling set to 1
+                     Adafruit_BME280::SAMPLING_X1, // Pressure sampling set to 1
+                     Adafruit_BME280::SAMPLING_X1, // Humidity sampling set to 1
+                     Adafruit_BME280::FILTER_OFF   // Filter off - immediate 100% step response
+                    );
     #ifdef BME1_ON
     check_bme280_status(&bme1_status, &bme1);
+    bme1.setSampling(Adafruit_BME280::MODE_FORCED, // Force reading after delayTime
+                    Adafruit_BME280::SAMPLING_X1, // Temperature sampling set to 1
+                    Adafruit_BME280::SAMPLING_X1, // Pressure sampling set to 1
+                    Adafruit_BME280::SAMPLING_X1, // Humidity sampling set to 1
+                    Adafruit_BME280::FILTER_OFF   // Filter off - immediate 100% step response
+                    );
     #endif
 //*******************************HX711*********************************//
     #ifdef HX711_ON
