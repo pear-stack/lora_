@@ -7,9 +7,56 @@
 #include <WiFi.h>
 #include <gps.h>
 #include <CayenneLPP.h>
-#include <bme280.h>
-#include <hx711_module.h>
+#include <sensors.h>
 #include <esp_sleep.h>
+
+#define SLEEP_BETWEEN_MESSAGES 1
+#define SLEEP_TIME_MS 20000
+#define SLEEP_DELAY_MS 2000
+
+#define DEBUG 1 // for real use comment this out
+
+CayenneLPP lpp(28); // Cayenne Low Power Payload (LPP) 
+#ifdef GPS_ON
+GPS gps;
+#endif
+Adafruit_BME280 bme0;
+#ifdef BME1_ON
+Adafruit_BME280 bme1;
+#endif
+#ifdef HX711_ON
+HX711 scale;
+#endif
+// GPS data 
+double lat, lon, alt; 
+// battery voltage
+float vBat; 
+// BME280 data 
+float temp0, hum0, pressure0; 
+float temp1, hum1, weight; 
+// status after reading from BME280
+bool bme0_status; 
+bool bme1_status;
+
+static osjob_t sendjob;
+// wait this many seconds when no GPS fix is received to retry
+const unsigned int GPS_FIX_RETRY_DELAY = 3; 
+// Pin mapping
+const lmic_pinmap lmic_pins = {
+    .nss = 18,
+    .rxtx = LMIC_UNUSED_PIN,
+    .rst = 14,
+    .dio = {26, 33, 32},
+};
+
+void do_send(osjob_t* j);
+
+void print_hex2(unsigned v) {
+    v &= 0xff;
+    if (v < 16)
+        Serial.print('0');
+    Serial.print(v, HEX);
+}
 
 void sleep_interrupt(uint8_t gpio, uint8_t mode) {
     esp_sleep_enable_ext0_wakeup((gpio_num_t) gpio, mode);
@@ -33,56 +80,9 @@ void sleep_forever() {
     esp_deep_sleep_start();
 }
 
-#define SLEEP_BETWEEN_MESSAGES 1
-#define DEBUG 1 // for real use comment this out
-//#define BUILTIN_LED 14 // T-Beam blue LED, see: http://tinymicros.com/wiki/TTGO_T-Beam
-#define BATTERY_PIN 35 // battery level measurement pin, here is the voltage divider connected
-#define SLEEP_TIME_MS 20000
-#define SLEEP_DELAY_MS 2000
-CayenneLPP lpp(28); // here we will construct Cayenne Low Power Payload (LPP) - see https://community.mydevices.com/t/cayenne-lpp-2-0/7510
-GPS gps; // class that is encapsulating additional GPS functionality
-#ifdef HX711_ON
-HX711 scale;
-#endif
-Adafruit_BME280 bme0;
-//Adafruit_BME280 bme1;
-
-double lat, lon, alt; // GPS data are saved here: Latitude, Longitude, Altitude
-int sats; // GPS satellite count
-char s[32]; // used to sprintf for Serial output
-float vBat; // battery voltage
-long nextPacketTime;
-
-float temp0, hum0, pressure0; // BME280 data are saved here: Temperature, Humidity, Pressure, Altitude calculated from atmospheric pressure
-bool bme0_status; // status after reading from BME280
-
-//float temp1, hum1, pressure1; // BME280 data are saved here: Temperature, Humidity, Pressure, Altitude calculated from atmospheric pressure
-//bool bme1_status; // status after reading from BME280
-
-void get_sensors_data(void); // declaration for function below
-static osjob_t sendjob;
-
-// wait this many seconds when no GPS fix is received to retry
-const unsigned int GPS_FIX_RETRY_DELAY = 3; 
-
-// Schedule TX every this many seconds.
-//const unsigned TX_INTERVAL = 5;
-
-// Pin mapping
-const lmic_pinmap lmic_pins = {
-    .nss = 18,
-    .rxtx = LMIC_UNUSED_PIN,
-    .rst = 14,
-    .dio = {26, 33, 32},
-};
-
-void do_send(osjob_t* j);
-
-
 
 void sleep() {
     #if SLEEP_BETWEEN_MESSAGES
-
         // Show the going to sleep message on the screen
         char buffer[20];
         snprintf(buffer, sizeof(buffer), "Sleeping in %d\n", (SLEEP_DELAY_MS / 1000));
@@ -94,52 +94,12 @@ void sleep() {
         // We sleep for the interval between messages minus the current millis
         // this way we distribute the messages evenly every SEND_INTERVAL millis
         sleep_millis(SLEEP_TIME_MS);
-
     #endif
-}
-
-
-
-
-void get_battery_voltage() {
-  // we've set 10-bit ADC resolution 2^10=1024 and voltage divider makes it half of maximum readable value (which is 3.3V)
-  vBat = analogRead(BATTERY_PIN) * (3.3 / 1024.0);
-  Serial.print("Battery voltage: ");
-  Serial.print(vBat);
-  Serial.println("V");  
-}
-
-void get_sensors_data(void){
-    //TODO: copy sensor handling
-    if(!bme0_status)
-    {
-        temp0 = 0.0;
-        hum0 = 0.0;
-        pressure0 = 0.0;
-    }
-    else
-    {
-        print_bme280_data(&bme0);
-        temp0 = bme0.readTemperature();
-        hum0 = bme0.readHumidity();
-        pressure0 = bme0.readPressure()/100;
-    }
-    delay(100);
-}
-
-
-void print_hex2(unsigned v) {
-    v &= 0xff;
-    if (v < 16)
-        Serial.print('0');
-    Serial.print(v, HEX);
 }
 
 void onEvent (ev_t ev) {
-    #ifdef DEBUG
     Serial.print(os_getTime());
     Serial.print(": ");
-    #endif
     switch(ev) {
         case EV_SCAN_TIMEOUT:
             Serial.println(F("EV_SCAN_TIMEOUT"));
@@ -198,8 +158,6 @@ void onEvent (ev_t ev) {
             break;
         case EV_TXCOMPLETE:
             Serial.println(F("EV_TXCOMPLETE (includes waiting for RX windows)"));
-            #ifdef DEBUG
-            digitalWrite(BUILTIN_LED, LOW);
             if (LMIC.txrxFlags & TXRX_ACK)
               Serial.println(F("Received ack"));
             if (LMIC.dataLen) {
@@ -207,13 +165,7 @@ void onEvent (ev_t ev) {
               Serial.print(LMIC.dataLen);
               Serial.println(F(" bytes of payload"));
             }
-            #endif
-            // Schedule next transmission
-            //os_setTimedCallback(&sendjob, os_getTime()+sec2osticks(TX_INTERVAL), do_send);
-            #ifdef DEBUG
-            //Serial.printf("Next lora packet schedudled in %d seconds.\n", TX_INTERVAL);
             sleep();
-            #endif
             break;
         case EV_LOST_TSYNC:
             Serial.println(F("EV_LOST_TSYNC"));
@@ -223,9 +175,7 @@ void onEvent (ev_t ev) {
             break;
         case EV_RXCOMPLETE:
             // data received in ping slot
-            #ifdef DEBUG
             Serial.println(F("EV_RXCOMPLETE"));
-            #endif
             break;
         case EV_LINK_DEAD:
             Serial.println(F("EV_LINK_DEAD"));
@@ -253,8 +203,12 @@ void onEvent (ev_t ev) {
 }
 
 void do_send(osjob_t* j){
-    get_battery_voltage();
-    get_sensors_data();
+    get_battery_voltage(&vBat);
+    //TODO: CHANGE bme0 to bme1 in 3rd argument
+    get_bme280_data(1, &bme0, bme0_status, &bme0, bme1_status, &temp0, &temp1, &hum0, &hum1, &pressure0); 
+    #ifdef HX711_ON
+    get_weight_data(&scale, &weight);
+    #endif
     // Check if there is not a current TX/RX job running
     if (LMIC.opmode & OP_TXRXPEND) 
     {
@@ -262,42 +216,38 @@ void do_send(osjob_t* j){
     } 
     else 
     {
-        /*
+        #ifdef GPS_ON
         // Prepare upstream data transmission at the next possible time.
         if (gps.checkGpsFix())
         {
             // Prepare upstream data transmission at the next possible time.
             gps.getLatLon(&lat, &lon, &alt, &sats);
-        */
-            // we have all the data that we need, let's construct LPP packet for Cayenne
+        #endif
+            // Pack LPP packet
             lpp.reset();
-            //lpp.addGPS(1, 0xee, 0xee, 0xee);
+        #ifdef GPS_ON
+            lpp.addGPS(1, 0xee, 0xee, 0xee);
+        #endif
             lpp.addTemperature(1, temp0);
             lpp.addTemperature(2 ,0xff);
             lpp.addRelativeHumidity(1, hum0);
             lpp.addRelativeHumidity(2, 0xff);
             lpp.addBarometricPressure(1, pressure0);
             lpp.addAnalogInput(1, vBat);
-            lpp.addAnalogInput(1, 0xff); //hx711
-            // optional: send current speed, satellite count, altitude from barometric sensor and battery voltage
-            //lpp.addAnalogInput(6, kmph);
-            //lpp.addAnalogInput(7, sats);
-            //lpp.addAnalogInput(8, alt_barometric);
-            // read LPP packet bytes, write them to FIFO buffer of the LoRa module, queue packet to send to TTN
+            lpp.addAnalogInput(2, 0xff); //hx711
+            // read LPP packet bytes, write them to FIFO buffer of the LoRa module, queue packet to send 
             LMIC_setTxData2(1, lpp.getBuffer(), lpp.getSize(), 0);
             Serial.print(lpp.getSize());
             Serial.println(F(" bytes long LPP packet queued."));
-            digitalWrite(BUILTIN_LED, HIGH);
-        /*
+        #ifdef GPS_ON
         }
         else
         {
             // try again in a few 'GPS_FIX_RETRY_DELAY' seconds...
             os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(GPS_FIX_RETRY_DELAY), do_send);
         }
-        */
+        #endif
     }
-    // Next TX is scheduled after TX_COMPLETE event.
 }
 
 void setup() {
@@ -312,16 +262,22 @@ void setup() {
     WiFi.mode(WIFI_OFF);
     btStop();
 //********************************GPS**********************************// 
-    //gps.init();
+    #ifdef GPS_ON
+    gps.init();
+    #endif
 //*******************************BME280********************************// 
     // address: 0x77 when ADDR PIN = HIGH, 0x76 when ADDR PIN = LOW
     // default I2C pins ESP12-E: SDA = GPIO 4 (D2), SCL = GPIO 5 (D1)
     // sensor init
     bme0_status = bme0.begin(0x76, &Wire);
-    //bme1_status = bme1.begin(0x77, &Wire);
+    #ifdef BME1_ON
+    bme1_status = bme1.begin(0x77, &Wire);
+    #endif
     // sensor test  
     check_bme280_status(bme0_status, &bme0);
-    //check_bme280_status(&bme1_status, &bme1);
+    #ifdef BME1_ON
+    check_bme280_status(&bme1_status, &bme1);
+    #endif
 //*******************************HX711*********************************//
     #ifdef HX711_ON
     // HX711 setup
@@ -336,7 +292,6 @@ void setup() {
     LMIC_reset();
     // Start job (sending automatically starts OTAA too)
     do_send(&sendjob);
-    Serial.println("setup end");
 //***********************************************************************//
 }
 
