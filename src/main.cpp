@@ -9,12 +9,37 @@
 #include <CayenneLPP.h>
 #include <bme280.h>
 #include <hx711_module.h>
+#include <esp_sleep.h>
 
+void sleep_interrupt(uint8_t gpio, uint8_t mode) {
+    esp_sleep_enable_ext0_wakeup((gpio_num_t) gpio, mode);
+}
+
+void sleep_interrupt_mask(uint64_t mask, uint8_t mode) {
+    esp_sleep_enable_ext1_wakeup(mask, (esp_sleep_ext1_wakeup_mode_t) mode);
+}
+
+void sleep_millis(uint64_t ms) {
+    esp_sleep_enable_timer_wakeup(ms * 1000);
+    esp_deep_sleep_start();
+}
+
+void sleep_seconds(uint32_t seconds) {
+    esp_sleep_enable_timer_wakeup(seconds * 1000000);
+    esp_deep_sleep_start();
+}
+
+void sleep_forever() {
+    esp_deep_sleep_start();
+}
+
+#define SLEEP_BETWEEN_MESSAGES 1
 #define DEBUG 1 // for real use comment this out
-#define BUILTIN_LED 14 // T-Beam blue LED, see: http://tinymicros.com/wiki/TTGO_T-Beam
+//#define BUILTIN_LED 14 // T-Beam blue LED, see: http://tinymicros.com/wiki/TTGO_T-Beam
 #define BATTERY_PIN 35 // battery level measurement pin, here is the voltage divider connected
-
-CayenneLPP lpp(51); // here we will construct Cayenne Low Power Payload (LPP) - see https://community.mydevices.com/t/cayenne-lpp-2-0/7510
+#define SLEEP_TIME_MS 20000
+#define SLEEP_DELAY_MS 2000
+CayenneLPP lpp(28); // here we will construct Cayenne Low Power Payload (LPP) - see https://community.mydevices.com/t/cayenne-lpp-2-0/7510
 GPS gps; // class that is encapsulating additional GPS functionality
 #ifdef HX711_ON
 HX711 scale;
@@ -41,7 +66,7 @@ static osjob_t sendjob;
 const unsigned int GPS_FIX_RETRY_DELAY = 3; 
 
 // Schedule TX every this many seconds.
-const unsigned TX_INTERVAL = 5;
+//const unsigned TX_INTERVAL = 5;
 
 // Pin mapping
 const lmic_pinmap lmic_pins = {
@@ -52,6 +77,28 @@ const lmic_pinmap lmic_pins = {
 };
 
 void do_send(osjob_t* j);
+
+
+
+void sleep() {
+    #if SLEEP_BETWEEN_MESSAGES
+
+        // Show the going to sleep message on the screen
+        char buffer[20];
+        snprintf(buffer, sizeof(buffer), "Sleeping in %d\n", (SLEEP_DELAY_MS / 1000));
+        Serial.print(buffer);
+
+        // Wait for MESSAGE_TO_SLEEP_DELAY millis to sleep
+        delay(SLEEP_DELAY_MS);
+        // Set the user button to wake the board
+        // We sleep for the interval between messages minus the current millis
+        // this way we distribute the messages evenly every SEND_INTERVAL millis
+        sleep_millis(SLEEP_TIME_MS);
+
+    #endif
+}
+
+
 
 
 void get_battery_voltage() {
@@ -75,7 +122,7 @@ void get_sensors_data(void){
         print_bme280_data(&bme0);
         temp0 = bme0.readTemperature();
         hum0 = bme0.readHumidity();
-        pressure0 = bme0.readPressure();
+        pressure0 = bme0.readPressure()/100;
     }
     delay(100);
 }
@@ -162,9 +209,10 @@ void onEvent (ev_t ev) {
             }
             #endif
             // Schedule next transmission
-            os_setTimedCallback(&sendjob, os_getTime()+sec2osticks(TX_INTERVAL), do_send);
+            //os_setTimedCallback(&sendjob, os_getTime()+sec2osticks(TX_INTERVAL), do_send);
             #ifdef DEBUG
-            Serial.printf("Next lora packet schedudled in %d seconds.\n", TX_INTERVAL);
+            //Serial.printf("Next lora packet schedudled in %d seconds.\n", TX_INTERVAL);
+            sleep();
             #endif
             break;
         case EV_LOST_TSYNC:
@@ -214,35 +262,40 @@ void do_send(osjob_t* j){
     } 
     else 
     {
+        /*
         // Prepare upstream data transmission at the next possible time.
         if (gps.checkGpsFix())
         {
             // Prepare upstream data transmission at the next possible time.
             gps.getLatLon(&lat, &lon, &alt, &sats);
-
+        */
             // we have all the data that we need, let's construct LPP packet for Cayenne
             lpp.reset();
-            lpp.addGPS(1, 0xee, 0xee, 0xee);
-            lpp.addTemperature(2, 0xff);
-            lpp.addRelativeHumidity(3, 0xff);
-            lpp.addBarometricPressure(4, 0xff);
-            lpp.addAnalogInput(5, 0xaa);
+            //lpp.addGPS(1, 0xee, 0xee, 0xee);
+            lpp.addTemperature(1, temp0);
+            lpp.addTemperature(2 ,0xff);
+            lpp.addRelativeHumidity(1, hum0);
+            lpp.addRelativeHumidity(2, 0xff);
+            lpp.addBarometricPressure(1, pressure0);
+            lpp.addAnalogInput(1, vBat);
+            lpp.addAnalogInput(1, 0xff); //hx711
             // optional: send current speed, satellite count, altitude from barometric sensor and battery voltage
             //lpp.addAnalogInput(6, kmph);
-            lpp.addAnalogInput(7, sats);
+            //lpp.addAnalogInput(7, sats);
             //lpp.addAnalogInput(8, alt_barometric);
             // read LPP packet bytes, write them to FIFO buffer of the LoRa module, queue packet to send to TTN
             LMIC_setTxData2(1, lpp.getBuffer(), lpp.getSize(), 0);
-            
             Serial.print(lpp.getSize());
             Serial.println(F(" bytes long LPP packet queued."));
             digitalWrite(BUILTIN_LED, HIGH);
+        /*
         }
         else
         {
             // try again in a few 'GPS_FIX_RETRY_DELAY' seconds...
             os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(GPS_FIX_RETRY_DELAY), do_send);
         }
+        */
     }
     // Next TX is scheduled after TX_COMPLETE event.
 }
@@ -259,7 +312,7 @@ void setup() {
     WiFi.mode(WIFI_OFF);
     btStop();
 //********************************GPS**********************************// 
-    gps.init();
+    //gps.init();
 //*******************************BME280********************************// 
     // address: 0x77 when ADDR PIN = HIGH, 0x76 when ADDR PIN = LOW
     // default I2C pins ESP12-E: SDA = GPIO 4 (D2), SCL = GPIO 5 (D1)
@@ -283,6 +336,7 @@ void setup() {
     LMIC_reset();
     // Start job (sending automatically starts OTAA too)
     do_send(&sendjob);
+    Serial.println("setup end");
 //***********************************************************************//
 }
 
