@@ -9,18 +9,19 @@
 #include <sensors.h>
 #include <esp_sleep.h>
 
+#define GPS_OFF
 #define DEBUG 1 // for real use comment this out
 #define SLEEP_BETWEEN_MESSAGES 1
 #define SLEEP_TIME_MS 30000
 #define SLEEP_DELAY_MS 1000
 
-
-
 CayenneLPP lpp(28); // Cayenne Low Power Payload (LPP) 
 #ifdef GPS_ON
 GPS gps;
 #endif
+#ifdef BME0_ON 
 Adafruit_BME280 bme0;
+#endif
 #ifdef BME1_ON
 Adafruit_BME280 bme1;
 #endif
@@ -28,7 +29,8 @@ Adafruit_BME280 bme1;
 HX711 scale;
 #endif
 // GPS data 
-double lat, lon, alt; 
+double lat, lon, alt;
+int sats; 
 // battery voltage
 float vBat; 
 // BME280 data 
@@ -199,7 +201,9 @@ void onEvent (ev_t ev) {
 void do_send(osjob_t* j){
     get_battery_voltage(&vBat);
     //TODO: CHANGE bme0 to bme1 in 3rd argument
+    #ifdef BME0_ON 
     get_bme280_data(&bme0, bme0_status, &bme0, bme0_status, &temp0, &temp1, &hum0, &hum1, &pressure0); 
+    #endif
     #ifdef HX711_ON
     get_weight_data(&scale, &weight);
     #endif
@@ -220,13 +224,13 @@ void do_send(osjob_t* j){
             // Pack LPP packet
             lpp.reset();
         #ifdef GPS_ON
-            lpp.addGPS(1, 0xee, 0xee, 0xee);
+            lpp.addGPS(1, lat, lon, alt);
         #endif
-            lpp.addTemperature(1, temp0);
+            lpp.addTemperature(1, 0xff);
             lpp.addTemperature(2 ,0xff);
-            lpp.addRelativeHumidity(1, hum0);
+            lpp.addRelativeHumidity(1, 0xff);
             lpp.addRelativeHumidity(2, 0xff);
-            lpp.addBarometricPressure(1, pressure0);
+            lpp.addBarometricPressure(1, 0xff);
             lpp.addAnalogInput(1, vBat);
             lpp.addAnalogInput(2, 0xff); //hx711
             // read LPP packet bytes, write them to FIFO buffer of the LoRa module, queue packet to send 
@@ -264,11 +268,13 @@ void setup() {
     // address: 0x77 when ADDR PIN = HIGH, 0x76 when ADDR PIN = LOW
     // default I2C pins ESP12-E: SDA = GPIO 4 (D2), SCL = GPIO 5 (D1)
     // sensor init
+    #ifdef BME0_ON 
     bme0_status = bme0.begin(0x76, &Wire);
+    #endif
     #ifdef BME1_ON
     bme1_status = bme1.begin(0x77, &Wire);
     #endif
-    // sensor test  
+    #ifdef BME0_ON 
     check_bme280_status(bme0_status, &bme0);
     bme0.setSampling(Adafruit_BME280::MODE_FORCED, // Force reading after delayTime
                      Adafruit_BME280::SAMPLING_X1, // Temperature sampling set to 1
@@ -276,6 +282,7 @@ void setup() {
                      Adafruit_BME280::SAMPLING_X1, // Humidity sampling set to 1
                      Adafruit_BME280::FILTER_OFF   // Filter off - immediate 100% step response
                     );
+     #endif
     #ifdef BME1_ON
     check_bme280_status(&bme1_status, &bme1);
     bme1.setSampling(Adafruit_BME280::MODE_FORCED, // Force reading after delayTime
