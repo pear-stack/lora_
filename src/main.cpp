@@ -14,11 +14,12 @@
 #define BME0_OFF
 #define BME1_OFF
 #define HX711_OFF
+#define AXP192_OFF
 #define DEBUG 1 
 
 #define SLEEP_BETWEEN_MESSAGES 1
 
-#define SLEEP_TIME_MS 60000
+#define SLEEP_TIME_MS 40000
 #define SLEEP_DELAY_MS 3000
 
 CayenneLPP lpp(28); // Cayenne Low Power Payload (LPP) 
@@ -93,7 +94,9 @@ void sleep_forever() {
 
 void sleep() {
     #if SLEEP_BETWEEN_MESSAGES
+    #ifdef AXP192_ON
         AXP192_power(0);
+    #endif
         char buffer[20];
         snprintf(buffer, sizeof(buffer), "Sleeping in %d\n", (SLEEP_DELAY_MS / 1000));
         Serial.print(buffer);
@@ -261,8 +264,10 @@ void setup() {
     Serial.begin(9600);
     Serial.println(F("Starting"));
 //*******************************AXP192*********************************//
+    #ifdef AXP192_ON
     Wire.begin(21, 22);
     AXP192_init();
+    #endif
 //*******************************BATTERY********************************// 
     adcAttachPin(BATTERY_PIN);
     // Default of 12 is not very linear. Recommended 10 or 11 depending on needed resolution.
