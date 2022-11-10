@@ -1,5 +1,5 @@
-#ifndef __CREDITIONALS_H__
-#define __CREDITIONALS_H__
+#ifndef _CREDITIONALS_H_
+#define _CREDITIONALS_H_
 
 #include <Arduino.h>
 #include <lmic.h>

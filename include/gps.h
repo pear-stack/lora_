@@ -1,5 +1,5 @@
-#ifndef __GPS_H__
-#define __GPS_H__
+#ifndef _GPS_H_
+#define _GPS_H_
 
 #include <TinyGPS++.h>
 #include <HardwareSerial.h>

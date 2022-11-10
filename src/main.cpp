@@ -8,12 +8,18 @@
 #include <CayenneLPP.h>
 #include <sensors.h>
 #include <esp_sleep.h>
+#include <axp.h>
 
 #define GPS_OFF
-#define DEBUG 1 // for real use comment this out
+#define BME0_OFF
+#define BME1_OFF
+#define HX711_OFF
+#define DEBUG 1 
+
 #define SLEEP_BETWEEN_MESSAGES 1
-#define SLEEP_TIME_MS 30000
-#define SLEEP_DELAY_MS 1000
+
+#define SLEEP_TIME_MS 60000
+#define SLEEP_DELAY_MS 3000
 
 CayenneLPP lpp(28); // Cayenne Low Power Payload (LPP) 
 #ifdef GPS_ON
@@ -31,6 +37,9 @@ HX711 scale;
 // GPS data 
 double lat, lon, alt;
 int sats; 
+long nextPacketTime;
+// wait this many seconds when no GPS fix is received to retry
+const unsigned int GPS_FIX_RETRY_DELAY = 10;
 // battery voltage
 float vBat; 
 // BME280 data 
@@ -41,8 +50,7 @@ bool bme0_status;
 bool bme1_status;
 
 static osjob_t sendjob;
-// wait this many seconds when no GPS fix is received to retry
-const unsigned int GPS_FIX_RETRY_DELAY = 3000; 
+
 // Pin mapping
 const lmic_pinmap lmic_pins = {
     .nss = 18,
@@ -85,6 +93,7 @@ void sleep_forever() {
 
 void sleep() {
     #if SLEEP_BETWEEN_MESSAGES
+        AXP192_power(0);
         char buffer[20];
         snprintf(buffer, sizeof(buffer), "Sleeping in %d\n", (SLEEP_DELAY_MS / 1000));
         Serial.print(buffer);
@@ -241,18 +250,19 @@ void do_send(osjob_t* j){
         }
         else
         {
-           while(!gps.checkGpsFix()){
-                delay(GPS_FIX_RETRY_DELAY);
-           }
+           os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(GPS_FIX_RETRY_DELAY), do_send);
         }
         #endif
     }
 }
 
 void setup() {
-//*******************************SERIAL********************************// 
+//*******************************SERIAL*********************************// 
     Serial.begin(9600);
     Serial.println(F("Starting"));
+//*******************************AXP192*********************************//
+    Wire.begin(21, 22);
+    AXP192_init();
 //*******************************BATTERY********************************// 
     adcAttachPin(BATTERY_PIN);
     // Default of 12 is not very linear. Recommended 10 or 11 depending on needed resolution.
@@ -286,10 +296,10 @@ void setup() {
     #ifdef BME1_ON
     check_bme280_status(&bme1_status, &bme1);
     bme1.setSampling(Adafruit_BME280::MODE_FORCED, // Force reading after delayTime
-                    Adafruit_BME280::SAMPLING_X1, // Temperature sampling set to 1
-                    Adafruit_BME280::SAMPLING_X1, // Pressure sampling set to 1
-                    Adafruit_BME280::SAMPLING_X1, // Humidity sampling set to 1
-                    Adafruit_BME280::FILTER_OFF   // Filter off - immediate 100% step response
+                     Adafruit_BME280::SAMPLING_X1, // Temperature sampling set to 1
+                     Adafruit_BME280::SAMPLING_X1, // Pressure sampling set to 1
+                     Adafruit_BME280::SAMPLING_X1, // Humidity sampling set to 1
+                     Adafruit_BME280::FILTER_OFF   // Filter off - immediate 100% step response
                     );
     #endif
 //*******************************HX711*********************************//
